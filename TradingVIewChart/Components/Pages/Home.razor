@@ -1,4 +1,4 @@
-﻿@page "/chart"
+﻿@page "/"
 
 @using Microsoft.Extensions.Logging
 @using TradingView.Blazor
@@ -16,7 +16,7 @@
         Chart wrapper
     </p>
     <div class="tradingview-chart">
-        <TradingViewChart @ref=myChart />
+
     </div>
 </div>
 
@@ -119,8 +119,8 @@
                 Width = -75
             };
 
-            if (myChart != null)
-                await myChart.LoadChartAsync(chartData, options);
+            // if (myChart != null)
+                // await myChart.LoadChartAsync(chartData, options);
         }
     }
 }

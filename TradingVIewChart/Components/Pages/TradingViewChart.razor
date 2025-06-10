@@ -17,24 +17,14 @@
             objRef = DotNetObjectReference.Create(this);
             module = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/tradingViewInterop.js");
             await module.InvokeVoidAsync("tradingViewInterop.initializeChart", "tradingViewChart");
+        }
+    }
 
-            // Example data
-            var candlestickData = new[]
-            {
-                new { open = 10.0, high = 10.63, low = 9.49, close = 9.55, time = 1642427876 },
-                new { open = 9.55, high = 10.30, low = 9.42, close = 9.94, time = 1642514276 },
-                new { open = 9.94, high = 10.17, low = 9.92, close = 9.78, time = 1642600676 }
-            };
-
-            var barData = new[]
-            {
-                new { open = 10.0, high = 10.63, low = 9.49, close = 9.55, time = 1642427876 },
-                new { open = 9.55, high = 10.30, low = 9.42, close = 9.94, time = 1642514276 },
-                new { open = 9.94, high = 10.17, low = 9.92, close = 9.78, time = 1642600676 }
-            };
-
-            await module.InvokeVoidAsync("tradingViewInterop.setCandlestickData", candlestickData);
-            await module.InvokeVoidAsync("tradingViewInterop.setBarData", barData);
+    public async Task SetSymbol(string symbol)
+    {
+        if (module != null)
+        {
+            await module.InvokeVoidAsync("tradingViewInterop.setSymbol", symbol);
         }
     }
 
