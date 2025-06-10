@@ -1,0 +1,126 @@
+﻿@page "/chart"
+
+@using Microsoft.Extensions.Logging
+@using TradingView.Blazor
+@using TradingView.Blazor.Models
+@using System.Collections.Generic
+@using System
+
+@rendermode InteractiveServer
+
+<h3>Chart view</h3>
+@* <PageTitle>Chart view</PageTitle> *@
+
+<div>
+    <p>
+        Chart wrapper
+    </p>
+    <div class="tradingview-chart">
+        <TradingViewChart @ref=myChart />
+    </div>
+</div>
+
+@code {
+    // ILogger<Index> logger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<Index>();
+
+
+    private TradingViewChart? myChart;
+    private List<Ohlcv> ohlcvData = new List<Ohlcv>();
+
+    private List<Ohlcv> GenerateChartData()
+    {
+        var random = new Random(42); // Fixed seed for reproducible data
+        var data = new List<Ohlcv>();
+        var basePrice = 100.0;
+        var currentDate = new DateTime(2023, 1, 1);
+
+        for (int i = 0; i < 22; i++)
+        {
+            // Skip weekends
+            while (currentDate.DayOfWeek == DayOfWeek.Saturday || currentDate.DayOfWeek == DayOfWeek.Sunday)
+            {
+                currentDate = currentDate.AddDays(1);
+            }
+
+            // Generate daily price movement (±3%)
+            var dailyVolatility = basePrice * 0.03;
+            var open = basePrice + random.NextDouble() * dailyVolatility - dailyVolatility / 2;
+            var high = open * (1 + random.NextDouble() * 0.02);
+            var low = open * (1 - random.NextDouble() * 0.02);
+            var close = (high + low) / 2 + (random.NextDouble() - 0.5) * (high - low);
+            var volume = random.Next(1000, 5000);
+
+            data.Add(new Ohlcv
+            {
+                Time = currentDate,
+                Open = (decimal)Math.Round(open, 2),
+                High = (decimal)Math.Round(high, 2),
+                Low = (decimal)Math.Round(low, 2),
+                Close = (decimal)Math.Round(close, 2),
+                Volume = volume
+            });
+
+            basePrice = close;
+            currentDate = currentDate.AddDays(1);
+        }
+
+        return data;
+    }
+
+    // public async Task UpdateChart(ChartData updatedChartData)
+    // {
+
+    //     await myChart.UpdateChartAsync(updatedChartData);
+    // }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // This method is called when the component is initialized
+        // You can perform any necessary setup here
+        // await base.OnInitializedAsync();
+    }
+
+    protected override bool ShouldRender()
+    {
+        return base.ShouldRender();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        if (firstRender)
+        {
+            ohlcvData = GenerateChartData();
+
+            var chartData = new ChartData
+            {
+                ChartEntries = new List<IChartEntry>(),
+                MarkerData = new List<Marker>(),
+            };
+
+            foreach (var candle in ohlcvData)
+            {
+                var something = new Ohlcv();
+                chartData.ChartEntries.Add(new Ohlcv
+                {
+                    Time = candle.Time,
+                    Volume = candle.Volume
+                });
+            }
+
+            // Fix: Specify the type argument for Logger<T>
+            // logger.LogInformation("This is an informational log message.");
+
+            var options = new ChartOptions
+            {
+                TimeScaleSecondsVisible = false,
+                Width = -75
+            };
+
+            if (myChart != null)
+                await myChart.LoadChartAsync(chartData, options);
+        }
+    }
+}
