@@ -1,0 +1,455 @@
+﻿@page "/tradingview"
+
+@using Microsoft.JSInterop
+@using System.Diagnostics
+
+@inject IJSRuntime js
+@implements IDisposable
+@rendermode RenderMode.InteractiveServer
+
+
+<div class="container">
+    <div class="row mb-3">
+        <div class="col">
+            <h3>TradingView Charts - Resource Testing</h3>
+            <div class="btn-group" role="group">
+                <button class="btn btn-primary" @onclick="AddChart">Add Chart</button>
+                @* <button class="btn btn-danger" @onclick="RemoveLastChart" disabled="@(charts.Count == 0)">Remove Last Chart</button> *@
+                @* <button class="btn btn-warning" @onclick="RemoveAllCharts" disabled="@(charts.Count == 0)">Remove All Charts</button> *@
+                @* <button class="btn btn-info" @onclick="CheckTradingViewStatus">Check Status</button> *@
+                @* <button class="btn btn-secondary" @onclick="TestTradingViewLibrary">Test Library</button> *@
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col">
+            <div class="card resource-monitor">
+                <div class="card-header">
+                    <h5 class="mb-0">Resource Usage Monitor</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-2">
+                            <strong>Active Charts:</strong> 
+                            <span class="resource-value">@charts.Count</span>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Memory Usage:</strong> 
+                            <span class="resource-value">@memoryUsage MB</span>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>CPU Usage:</strong> 
+                            <span class="resource-value">@cpuUsage%</span>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>JS Memory:</strong> 
+                            <span class="resource-value">@jsMemoryUsage MB</span>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Avg Load Time:</strong> 
+                            <span class="resource-value">@avgLoadTime ms</span>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Last Updated:</strong> 
+                            <span class="resource-value">@lastUpdateTime.ToString("HH:mm:ss")</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (debugMessage != "")
+    {
+        <div class="alert alert-warning">@debugMessage</div>
+    }
+
+    <div class="row">
+        @foreach (var chart in charts)
+        {
+            <div class="col-md-6 col-lg-4 mb-3">
+                <div class="card chart-card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">Chart @chart.Id.Substring(chart.Id.Length - 8)</h6>
+                        @* <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveChart(chart.Id)" title="Remove Chart">×</button> *@
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="chart-container">
+                            @* <div id="@chart.Id" style="width: 100%; height: 300px;"></div> *@
+                            <div id="@chart.Id" style="height:400px;width:100%"></div>
+
+                        </div>
+                    </div>
+                    <div class="card-footer chart-controls">
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control" placeholder="Symbol (e.g., AAPL)" 
+                                   @bind="chart.Symbol" @onkeyup="@(async (e) => await SetSymbol(chart.Id, chart.Symbol))" />
+                            <button class="btn btn-outline-secondary" @onclick="() => SetSymbol(chart.Id, chart.Symbol)">Set</button>
+                        </div>
+                        @if (chart.LoadTime > 0)
+                        {
+                            <small class="text-muted mt-1 d-block">Load time: @chart.LoadTime ms</small>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+    </div>
+
+    @if (charts.Count == 0)
+    {
+        <div class="row">
+            <div class="col text-center">
+                <div class="alert alert-info">
+                    <h5>No charts active</h5>
+                    <p>Click "Add Chart" to start testing with TradingView charts.</p>
+                </div>
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    private IJSObjectReference? module;
+    private string debugMessage = "";
+    private List<ChartInfo> charts = new();
+    private Timer? resourceTimer;
+    private double memoryUsage = 0;
+    private double cpuUsage = 0;
+    private double jsMemoryUsage = 0;
+    private double avgLoadTime = 0;
+    private DateTime lastUpdateTime = DateTime.Now;
+    private Process? currentProcess;
+    private TimeSpan lastCpuTime = TimeSpan.Zero;
+    private DateTime lastCpuCheck = DateTime.UtcNow;
+
+    public class ChartInfo
+    {
+        public string Id { get; set; } = "";
+        public string Symbol { get; set; } = "AAPL";
+        public double LoadTime { get; set; } = 0;
+    }
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        currentProcess = Process.GetCurrentProcess();
+        StartResourceMonitoring();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitModule();
+            // Add a delay to ensure DOM and TradingView library are ready
+            await Task.Delay(500);
+            // Add initial chart
+            await AddChart();
+        }
+    }
+
+    private async Task InitModule()
+    {
+        try
+        {
+            // module = await js.InvokeAsync<IJSObjectReference>("import", "./js/tradingViewInterop.js");
+            module = await js.InvokeAsync<IJSObjectReference>("import", "./js/TradingViewChartReact.js");
+        }
+        catch (Exception ex)
+        {
+            debugMessage += $"\nError loading module: {ex.Message}";
+            Console.WriteLine($"Error loading module: {ex.Message}");
+        }
+    }
+
+    public async Task AddChart()
+    {
+        if (module == null) return;
+
+        try
+        {
+            // Check if TradingView library is available with retry
+            @* var isAvailable = false;
+            var retryCount = 0;
+            const int maxRetries = 10;
+            
+            while (!isAvailable && retryCount < maxRetries)
+            {
+                isAvailable = await module.InvokeAsync<bool>("checkTradingViewAvailability");
+                if (!isAvailable)
+                {
+                    retryCount++;
+                    debugMessage = $"Waiting for TradingView library... (attempt {retryCount}/{maxRetries})";
+                    StateHasChanged();
+                    await Task.Delay(500); // Wait 500ms before retry
+                }
+            }
+             *@
+            @* if (!isAvailable)
+            {
+                debugMessage = "TradingView library failed to load. Please refresh the page and try again.";
+                Console.WriteLine("TradingView library not available after retries");
+                return;
+            } *@
+
+            debugMessage = ""; // Clear any waiting messages
+            var chartId = $"tradingViewChart_{Guid.NewGuid()}";
+
+            var chartInfo = new ChartInfo { Id = chartId, Symbol = "AAPL" };
+            charts.Add(chartInfo);
+            
+            // Force UI update to render the DOM element
+            StateHasChanged();
+            
+            // Wait for the DOM to be updated
+            await Task.Delay(100);
+            
+            // Force another render to ensure DOM is ready
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(100);
+            
+            @* var success = await module.InvokeAsync<bool>("initializeChart", chartId, chartInfo.Symbol);
+            if (!success)
+            {
+                debugMessage = $"Failed to initialize chart {chartId}";
+                charts.Remove(chartInfo);
+                Console.WriteLine($"Failed to initialize chart {chartId}");
+                return;
+            } *@
+            await module.InvokeVoidAsync("renderTradingViewChartReact", chartId, chartId, chartInfo.Symbol);
+            
+            // Get chart statistics
+            await UpdateChartStats();
+            
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error adding chart: {ex.Message}";
+            Console.WriteLine($"Error adding chart: {ex.Message}");
+        }
+    }
+
+    @* public async Task RemoveChart(string chartId)
+    {
+        if (module == null) return;
+
+        try
+        {
+            await module.InvokeVoidAsync("disposeChart", chartId);
+            charts.RemoveAll(c => c.Id == chartId);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error removing chart: {ex.Message}";
+            Console.WriteLine($"Error removing chart: {ex.Message}");
+        }
+    }
+
+    public async Task RemoveLastChart()
+    {
+        if (charts.Count > 0)
+        {
+            var lastChart = charts.Last();
+            await RemoveChart(lastChart.Id);
+        }
+    }
+
+    public async Task RemoveAllCharts()
+    {
+        if (module == null) return;
+
+        try
+        {
+            foreach (var chart in charts.ToList())
+            {
+                await module.InvokeVoidAsync("disposeChart", chart.Id);
+            }
+            charts.Clear();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error removing all charts: {ex.Message}";
+            Console.WriteLine($"Error removing all charts: {ex.Message}");
+        }
+    } *@
+
+    public async Task SetSymbol(string chartId, string symbol)
+    {
+        if (module != null && !string.IsNullOrEmpty(symbol))
+        {
+            try
+            {
+                await module.InvokeVoidAsync("setSymbol", chartId, symbol);
+            }
+            catch (Exception ex)
+            {
+                debugMessage = $"Error setting symbol: {ex.Message}";
+                Console.WriteLine($"Error setting symbol: {ex.Message}");
+            }
+        }
+    }
+
+    public async Task CheckTradingViewStatus()
+    {
+        if (module == null) return;
+
+        try
+        {
+            var isAvailable = await module.InvokeAsync<bool>("checkTradingViewAvailability");
+            debugMessage = isAvailable ? "TradingView library is ready!" : "TradingView library is not ready.";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error checking status: {ex.Message}";
+            Console.WriteLine($"Error checking TradingView status: {ex.Message}");
+        }
+    }
+
+    public async Task TestTradingViewLibrary()
+    {
+        if (module == null) return;
+
+        try
+        {
+            var isWorking = await module.InvokeAsync<bool>("testTradingViewLibrary");
+            debugMessage = isWorking ? "TradingView library test passed!" : "TradingView library test failed!";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            debugMessage = $"Error testing library: {ex.Message}";
+            Console.WriteLine($"Error testing TradingView library: {ex.Message}");
+        }
+    }
+
+    private async Task UpdateChartStats()
+    {
+        if (module == null) return;
+
+        try
+        {
+            // Get JavaScript memory usage
+            var jsMemory = await module.InvokeAsync<object>("getMemoryUsage");
+            if (jsMemory != null)
+            {
+                // Parse the memory object using JSON
+                var memoryJson = await js.InvokeAsync<string>("JSON.stringify", jsMemory);
+                if (!string.IsNullOrEmpty(memoryJson))
+                {
+                    // Simple parsing - in production you'd want proper JSON deserialization
+                    if (memoryJson.Contains("used"))
+                    {
+                        var usedMatch = System.Text.RegularExpressions.Regex.Match(memoryJson, @"""used"":(\d+)");
+                        if (usedMatch.Success && double.TryParse(usedMatch.Groups[1].Value, out var used))
+                        {
+                            jsMemoryUsage = Math.Round(used / 1024.0 / 1024.0, 2); // Convert bytes to MB
+                        }
+                    }
+                }
+            }
+
+            // Get chart statistics
+            var chartStats = await module.InvokeAsync<object>("getChartStats");
+            if (chartStats != null)
+            {
+                // Update load times for charts
+                var statsJson = await js.InvokeAsync<string>("JSON.stringify", chartStats);
+                if (!string.IsNullOrEmpty(statsJson))
+                {
+                    // Parse chart stats to update load times
+                    // This is simplified - you'd want proper JSON parsing here
+                    foreach (var chart in charts)
+                    {
+                        var chartMatch = System.Text.RegularExpressions.Regex.Match(statsJson, $@"""{chart.Id}"".*?""loadTime"":(\d+\.?\d*)");
+                        if (chartMatch.Success && double.TryParse(chartMatch.Groups[1].Value, out var loadTime))
+                        {
+                            chart.LoadTime = loadTime;
+                        }
+                    }
+                }
+            }
+
+            // Calculate average load time
+            if (charts.Any(c => c.LoadTime > 0))
+            {
+                avgLoadTime = Math.Round(charts.Where(c => c.LoadTime > 0).Average(c => c.LoadTime), 2);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating chart stats: {ex.Message}");
+        }
+    }
+
+    private void StartResourceMonitoring()
+    {
+        resourceTimer = new Timer(async _ =>
+        {
+            await UpdateResourceUsage();
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
+    }
+
+    private async Task UpdateResourceUsage()
+    {
+        try
+        {
+            if (currentProcess != null)
+            {
+                // Refresh process info
+                currentProcess.Refresh();
+                
+                // Get memory usage in MB
+                memoryUsage = Math.Round(currentProcess.WorkingSet64 / 1024.0 / 1024.0, 2);
+                
+                // Calculate CPU usage percentage properly
+                var currentCpuTime = currentProcess.TotalProcessorTime;
+                var currentTime = DateTime.UtcNow;
+                var timeDiff = (currentTime - lastCpuCheck).TotalSeconds;
+                
+                if (timeDiff > 0 && lastCpuTime != TimeSpan.Zero)
+                {
+                    var cpuDiff = (currentCpuTime - lastCpuTime).TotalMilliseconds;
+                    cpuUsage = Math.Round((cpuDiff / timeDiff) / Environment.ProcessorCount, 2);
+                }
+                
+                lastCpuTime = currentCpuTime;
+                lastCpuCheck = currentTime;
+                lastUpdateTime = DateTime.Now;
+                
+                // Update chart statistics
+                await UpdateChartStats();
+                
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating resource usage: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        resourceTimer?.Dispose();
+        currentProcess?.Dispose();
+        
+        if (module != null)
+        {
+            // Dispose all charts
+            foreach (var chart in charts)
+            {
+                module.InvokeVoidAsync("disposeChart", chart.Id);
+            }
+            module.DisposeAsync();
+        }
+    }
+}
+
